@@ -888,6 +888,7 @@ Type
   TRQLUnion = Class(TRQLMethodQuery)
   Public
     Constructor Create( Const Args: Array of Const ); Overload;
+    Constructor Create( Const Args: Array of TRQLQuery ); Overload;
     Constructor Create( Const Obj: TRQLQuery; Const Args: Array of Const ); Overload;
     Constructor Create( Const Obj: TRQLQuery; Const Args: Array of TRQLQuery ); Overload;
   End;
@@ -1735,7 +1736,8 @@ Type
     Class Function do_( Const args: Array of Const; Const f: TFunc<TRQLQuery, TRQLQuery, TRQLQuery, TRQLQuery, TRQLQuery> ): TRQLFunCall; Overload; static;
     Class Function row: TRQLImplicitVar; static;
     Class Function branch( Const test, trueBranch, falseBranch: TRQLQuery ): TRQLBranch; static;
-
+    Class Function union( Const sequences: Array of Const ): TRQLUnion; Overload;
+    Class Function union( Const sequences: Array of TRQLQuery ): TRQLUnion; Overload;
     Class Function map( Const sequence: TRQLQuery; Const f: TFunc<TRQLQuery, TRQLQuery> ): TRQLMap; Overload; static;
     Class Function map( Const sequence1, sequence2: TRQLQuery; Const f: TFunc<TRQLQuery, TRQLQuery, TRQLQuery> ): TRQLMap; Overload; static;
     Class Function map( Const sequence1, sequence2, sequence3: TRQLQuery; Const f: TFunc<TRQLQuery, TRQLQuery, TRQLQuery, TRQLQuery> ): TRQLMap; Overload; static;
@@ -4328,6 +4330,11 @@ Begin
   Inherited Create( TERMTYPE_UNION, 'union', Args );
 End;
 
+Constructor TRQLUnion.Create( Const Args: Array of TRQLQuery );
+Begin
+  Inherited Create( TERMTYPE_UNION, 'union', Args );
+End;
+
 Constructor TRQLUnion.Create( Const obj: TRQLQuery; Const Args: Array of Const );
 Begin
   Inherited Create( TERMTYPE_UNION, 'union',Obj, Args );
@@ -5702,6 +5709,16 @@ End;
 Class Function TRethinkDB.branch( Const test, trueBranch, falseBranch: TRQLQuery ): TRQLBranch;
 Begin
   Result := TRQLBranch.Create([ test, trueBranch, falseBranch ], [ ]);
+End;
+
+Class Function TRethinkDB.union( Const sequences: Array of Const ): TRQLUnion;
+Begin
+  Result := TRQLUnion.Create( sequences );
+End;
+
+Class Function TRethinkDB.union( Const sequences: Array of TRQLQuery ): TRQLUnion;
+Begin
+  Result := TRQLUnion.Create( sequences );
 End;
 
 Class Function TRethinkDB.map( Const sequence: TRQLQuery; Const f: TFunc<TRQLQuery, TRQLQuery> ): TRQLMap;
