@@ -6364,7 +6364,7 @@ Class Function TRethinkDB.expr(Const d : TDateTime): TRQLQuery;
 Begin
   With TXSDateTime.Create() Do
     Try
-      AsDateTime := d;
+      AsUTCDateTime := d;
       Result := TRQLISO8601.Create([ NativeToXS ], []);
     Finally
       Free();
