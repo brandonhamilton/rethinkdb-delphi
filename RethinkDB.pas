@@ -2528,6 +2528,9 @@ Begin
               Then Raise EReqlAuthError.Create( host, port )
               Else Raise EReqlDriverError.Create('Server dropped connection with message: "' + ResponseMessage + '"');
           End;
+
+      // Enable TCP Keepalive
+      FSocket.Socket.Binding.SetSockOpt(Id_SOL_SOCKET, Id_SO_KEEPALIVE, 1);
     Except
       On E: EIdSocketError Do Begin
          If E.LastError = Id_WSAETIMEDOUT 
