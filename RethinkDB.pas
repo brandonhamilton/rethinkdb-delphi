@@ -30,7 +30,7 @@ Unit RethinkDB;
 
 Interface
 
-Uses System.Generics.Collections, SysUtils, Classes, SyncObjs, IdTCPClient, IdGlobal, DBXJson;
+Uses System.Generics.Collections, SysUtils, Classes, SyncObjs, IdTCPClient, IdGlobal, IdStack, IdStackConsts, DBXJson;
 
 Const
 
@@ -1517,26 +1517,42 @@ Type
     FFrames: Array of TRethinkDbFrame;
   End;
 
-  ERQLError               = Class(Exception);
-  ERQLDriverError         = Class(ERQLError);
-  ERQLTimeoutError        = Class(ERQLError)
+  EReqlCursorEmpty = Class(Exception)
   Public
-    Constructor Create;
+    Constructor Create; Overload;
   End;
 
-  ERQLQueryError          = Class(ERQLError)
+  EReqlError = Class(Exception)
   Private
     FFrames: TRethinkDbBacktrace;
     FTerm  : TRQLQuery;
   Public
-    Constructor Create(Const Msg: String; Const Term: TRQLQuery; Frames: TRethinkDbBacktrace);
+    Constructor Create(Const Msg: String); Overload;
+    Constructor Create(Const Msg: String; Const Term: TRQLQuery; Frames: TRethinkDbBacktrace); Overload;
   End;
-  ERQLClientError         = Class(ERQLQueryError);
-  ERQLCompileError        = Class(ERQLQueryError);
-  ERQLRuntimeError        = Class(ERQLQueryError);
-  ERQLCursorEmpty         = Class(ERQLQueryError)
+
+  EReqlCompileError         = Class(EReqlError);
+  EReqlRuntimeError         = Class(EReqlError);
+
+  EReqlQueryLogicError      = Class(EReqlRuntimeError);
+  EReqlNonExistenceError    = Class(EReqlQueryLogicError);
+  EReqlResourceLimitError   = Class(EReqlRuntimeError);
+  EReqlUserError            = Class(EReqlRuntimeError);
+  EReqlInternalError        = Class(EReqlRuntimeError);
+  EReqlAvailabilityError    = Class(EReqlRuntimeError);
+  EReqlOpFailedError        = Class(EReqlAvailabilityError);
+  EReqlOpIndeterminateError = Class(EReqlAvailabilityError);
+
+  EReqlDriverError          = Class(EReqlError);
+  EReqlAuthError            = Class(EReqlDriverError)
   Public
-    Constructor Create( Term: TRQLQuery );
+    Constructor Create; Overload;
+    Constructor Create(Const host: String; Const port: Word); Overload;
+  End;
+  EReqlTimeoutError         = Class(EReqlDriverError)
+  Public
+    Constructor Create; Overload;
+    Constructor Create(Const host: String; Const port: Word); Overload;
   End;
 
   TQueryType = (
@@ -1574,6 +1590,19 @@ Type
     RESPONSE_RUNTIME_ERROR
   );
 
+  {$Z4}
+  TErrorType = (
+    ERROR_TYPE_UNKNOWN = 0,
+    ERROR_TYPE_INTERNAL = 1000000,
+    ERROR_TYPE_RESOURCE_LIMIT = 2000000,
+    ERROR_TYPE_QUERY_LOGIC = 3000000,
+    ERROR_TYPE_NON_EXISTENCE = 3100000,
+    ERROR_TYPE_OP_FAILED = 4100000,
+    ERROR_TYPE_OP_INDETERMINATE = 4200000,
+    ERROR_TYPE_USER = 5000000
+  );
+  {$Z1} 
+
   TRethinkDbResponse = Class(TObject)
   Private
     FToken     : Int64;
@@ -1581,10 +1610,11 @@ Type
     FData      : TJSONArray;
     FBacktrace : TRethinkDbBacktrace;
     FProfile   : TJSONValue;
+    FErrorType : TErrorType;
   Public
     Constructor Create( Token: Int64; Response: UTF8String );
     Destructor  Destroy; override;
-    Function    MakeError( Query: TRethinkDbQuery ): ERQLError;
+    Function    MakeError( Query: TRethinkDbQuery ): EReqlError;
     Property    ResponseType: TResponseType read FType;
     Property    Data: TJSONArray read FData;
     Property    Backtrace: TRethinkDbBacktrace read FBacktrace;
@@ -1670,7 +1700,7 @@ Type
     FItems               : TJSONArray;
     FOutstandingRequests : Byte;
     FThreshold           : Word;
-    FError               : ERQLError;
+    FError               : Exception;
 
     Procedure MaybeFetchBatch;
     Procedure AddResponse( Response: TRethinkDbResponse );
@@ -2070,17 +2100,39 @@ Begin
 End;
 
 (** Errors **)
-Constructor ERQLCursorEmpty.Create( Term: TRQLQuery );
+Constructor EReqlCursorEmpty.Create;
 Begin
-  Inherited Create( 'Cursor is empty.', Term, Nil);
+  Inherited Create( 'Cursor is empty.' );
 End;
 
-Constructor ERQLTimeoutError.Create;
+Constructor EReqlAuthError.Create;
+Begin
+  Inherited Create('Incorrect authentication key.');
+End;
+
+Constructor EReqlAuthError.Create(Const host: String; Const port: Word);
+Begin
+  Inherited Create('Could not connect to ' + host + ':' + IntToStr(port) + ', incorrect authentication key.');
+End;
+
+Constructor EReqlTimeoutError.Create;
 Begin
   Inherited Create('Operation timed out.');
 End;
 
-Constructor ERQLQueryError.Create(Const Msg: String; Const Term: TRQLQuery; Frames: TRethinkDbBacktrace);
+Constructor EReqlTimeoutError.Create(Const host: String; Const port: Word);
+Begin
+  Inherited Create('Could not connect to ' + host + ':' + IntToStr(port) + ', operation timed out.');
+End;
+
+Constructor EReqlError.Create(Const Msg: String);
+Begin
+  Inherited Create( Msg );
+  FTerm   := Nil;
+  FFrames := Nil;
+End;
+
+Constructor EReqlError.Create(Const Msg: String; Const Term: TRQLQuery; Frames: TRethinkDbBacktrace);
 Begin
   If Term <> Nil
     Then Inherited Create( Msg + ' in:' + sLineBreak + PrintQuery(Term) )
@@ -2109,9 +2161,9 @@ Var p: TJSONPair;
 Begin
   p := reqlObject.Get('$reql_type$');
   If p = Nil
-    Then Raise ERQLDriverError.Create('Object does not contain a ReQL data type')
+    Then Raise EReqlDriverError.Create('Object does not contain a ReQL data type')
     Else If CompareStr( JSONToString(p.JsonValue), expectedType) <> 0
-      Then Raise ERQLDriverError.Create('Unknown pseudo-type ' + JSONToString(p.JsonValue));
+      Then Raise EReqlDriverError.Create('Unknown pseudo-type ' + JSONToString(p.JsonValue));
 End;
 
 Function _extractValue( Const reqlObject: TJSONObject; Const name: String ): TJSONValue; Inline;
@@ -2119,7 +2171,7 @@ Var p: TJSONPair;
 Begin
   p := reqlObject.Get(name);
   If p = Nil
-    Then Raise ERQLDriverError.Create('Object does not have expected field ' + name)
+    Then Raise EReqlDriverError.Create('Object does not have expected field ' + name)
     Else Result := p.JsonValue;
 End;
 
@@ -2139,7 +2191,7 @@ Begin
             Then tz := tz*(-1);
           timestamp := timestamp + tz;
         Except
-          Raise ERQLDriverError.Create('Unable to interpret timezone ' + timezone);
+          Raise EReqlDriverError.Create('Unable to interpret timezone ' + timezone);
         End;
       End;
   Result := (timestamp / 86400) + 25569.0;
@@ -2231,7 +2283,11 @@ Begin
       Begin
         FProfile   := Response_Object.Get('p').JsonValue;
         FProfile.Owned := False;
-      End;
+      End
+  Else FProfile := Nil;
+  If Response_Object.Get('e') <> Nil
+    Then FErrorType := TErrorType( (Response_Object.Get('e').JsonValue as TJSONNumber).AsInt )
+    Else FErrorType := ERROR_TYPE_UNKNOWN;
   Response_Object.Destroy;
 End;
 
@@ -2245,14 +2301,27 @@ Begin
   Inherited;
 End;
 
-Function TRethinkDbResponse.MakeError( Query: TRethinkDbQuery ): ERQLError;
+Function TRethinkDbResponse.MakeError( Query: TRethinkDbQuery ): EReqlError;
 Begin
   Case FType Of
-    RESPONSE_CLIENT_ERROR  : Result := ERQLClientError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace);
-    RESPONSE_COMPILE_ERROR : Result := ERQLCompileError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
-    RESPONSE_RUNTIME_ERROR : Result := ERQLRuntimeError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+    RESPONSE_CLIENT_ERROR  : Result := EReqlDriverError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace);
+    RESPONSE_COMPILE_ERROR : Result := EReqlCompileError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+    RESPONSE_RUNTIME_ERROR : Begin
+      Case FErrorType of
+        ERROR_TYPE_UNKNOWN:          Result := EReqlRuntimeError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+        ERROR_TYPE_INTERNAL:         Result := EReqlInternalError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+        ERROR_TYPE_RESOURCE_LIMIT:   Result := EReqlResourceLimitError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+        ERROR_TYPE_QUERY_LOGIC:      Result := EReqlQueryLogicError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+        ERROR_TYPE_NON_EXISTENCE:    Result := EReqlNonExistenceError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+        ERROR_TYPE_OP_FAILED:        Result := EReqlOpFailedError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+        ERROR_TYPE_OP_INDETERMINATE: Result := EReqlOpIndeterminateError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+        ERROR_TYPE_USER:             Result := EReqlUserError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+      Else
+        Result := EReqlRuntimeError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+      End;
+    End
   Else
-    Result := ERQLDriverError.Create( 'Unknown response type ' + IntToStr(Integer(FType)) + ' encountered in a response.' )
+    Result := EReqlDriverError.Create( 'Unknown response type ' + IntToStr(Integer(FType)) + ' encountered in a response.' )
   End;
 End;
 
@@ -2282,7 +2351,7 @@ Begin
   If FError = Nil
     Then
       Begin
-        FError := ERQLCursorEmpty.Create( Query.Term );
+        FError := EReqlCursorEmpty.Create;
         If Connection.IsOpen
           Then
             Begin
@@ -2297,7 +2366,7 @@ Begin
   If (FError = Nil)
     Then
       Begin
-        FError := ERQLRuntimeError.Create(Msg, Query.Term, Nil);
+        FError := EReqlRuntimeError.Create(Msg, Query.Term, Nil);
         AddResponse( TRethinkDbResponse.Create( Query.Token, '{"t":' + IntToStr(Integer(RESPONSE_SUCCESS_SEQUENCE)) +',"r":[]}' ) );
       End;
 End;
@@ -2319,7 +2388,7 @@ Begin
           RESPONSE_SUCCESS_SEQUENCE: Begin
             For Item in Response.Data
               Do FItems.AddElement(Item);
-            FError :=  ERQLCursorEmpty.Create( Query.Term );
+            FError :=  EReqlCursorEmpty.Create;
           End;
 
         Else
@@ -2422,39 +2491,52 @@ Begin
 End;
 
 Procedure TRethinkDbConnection.Connect;
-Var I: Integer; Response: UTF8String;
+Var I: Integer; Response: UTF8String; ResponseMessage: String;
 Begin
   FLock.Enter;
   Try
-    FSocket.Host := Host;
-    FSocket.Port := Port;
-    FSocket.Connect;
+    Try
+      FSocket.Host := Host;
+      FSocket.Port := Port;
+      FSocket.Connect;
+          
+      FData.Position := 0;
 
-    FData.Position := 0;
+      I := Integer( VERSION_V0_4 ); // Version
+      FData.Write(I, 4);
 
-    I := Integer( VERSION_V0_4 ); // Version
-    FData.Write(I, 4);
+      I := Length(FAuthKey);        // Auth Key
+      FData.Write(I, 4);
+      FData.Write(FAuthKey[1],I);   // Protocol
+      I := Integer( PROTOCOL_JSON );
+      FData.Write(I, 4);
+      I := FData.Position;
 
-    I := Length(FAuthKey);        // Auth Key
-    FData.Write(I, 4);
-    FData.Write(FAuthKey[1],I);   // Protocol
-    I := Integer( PROTOCOL_JSON );
-    FData.Write(I, 4);
-    I := FData.Position;
+      // Send Auth Request
+      FData.Position := 0;
+      FSocket.IOHandler.Write(FData, 0 );
 
-    // Send Auth Request
-    FData.Position := 0;
-    FSocket.IOHandler.Write(FData, 0 );
-
-    // Get Auth Response
-    Response := FSocket.IOHandler.ReadLn(#0, IndyUTF8Encoding);
-    If Response <> 'SUCCESS'
-      Then
-        Begin
-          FSocket.Disconnect;
-          Raise ERQLDriverError.Create('Server dropped connection with message: "' + Response + '"');
-        End;
-
+      // Get Auth Response
+      Response := FSocket.IOHandler.ReadLn(#0, IndyUTF8Encoding);
+      If Response <> 'SUCCESS'
+        Then
+          Begin
+            FSocket.Disconnect;
+            ResponseMessage := Trim( UTF8ToString ( Response ) );
+            If 'ERROR: Incorrect authorization key.' = ResponseMessage 
+              Then Raise EReqlAuthError.Create( host, port )
+              Else Raise EReqlDriverError.Create('Server dropped connection with message: "' + ResponseMessage + '"');
+          End;
+    Except
+      On E: EIdSocketError Do Begin
+         If E.LastError = Id_WSAETIMEDOUT 
+          Then Raise EReqlTimeoutError.Create( host, port  )
+          Else Raise EReqlDriverError.Create(E.Message);
+      End;
+      On E: Exception Do Begin
+        raise EReqlDriverError.Create(E.Message);
+      End;
+    End;
   Finally
     FLock.Leave;
   End;
@@ -2500,7 +2582,7 @@ End;
 Procedure TRethinkDbConnection.CheckOpen;
 Begin
   If Not FSocket.Connected
-    Then Raise ERQLDriverError.Create('Connection is closed.');
+    Then Raise EReqlDriverError.Create('Connection is closed.');
 End;
 
 Function TRethinkDbConnection.noreply_wait: TRQLResult;
@@ -2528,47 +2610,56 @@ End;
 
 Function TRethinkDbConnection.RunQuery( Query: TRethinkDbQuery; NoReply: Boolean ): TRQLResult;
 Var Response: TRethinkDbResponse;
-    Error   : ERQLError;
+    Error   : EReqlError;
 Begin
   Result := Nil;
   FLock.Enter;
   Try
-    FData.Clear;
-    // Serialize query
-    Query.Serialize( FData );
-    // Send query request
-    FSocket.IOHandler.Write(FData, 0);
+    Try
+      FData.Clear;
+      // Serialize query
+      Query.Serialize( FData );
+      // Send query request
+      FSocket.IOHandler.Write(FData, 0);
 
-    If NoReply
-      Then Exit;
+      If NoReply
+        Then Exit;
 
-    // Retreive response
-    Response := GetResponse( Query.Token );
+      // Retreive response
+      Response := GetResponse( Query.Token );
 
-    Case Response.ResponseType Of
-      RESPONSE_SUCCESS_ATOM: Begin
-        // Single Datum
-        Result := TRQLDocument.Create( Response.Data.Get(0), Response.Profile );
-        Query.Destroy;
+      Case Response.ResponseType Of
+        RESPONSE_SUCCESS_ATOM: Begin
+          // Single Datum
+          Result := TRQLDocument.Create( Response.Data.Get(0), Response.Profile );
+          Query.Destroy;
+        End;
+        RESPONSE_SUCCESS_SEQUENCE,
+        RESPONSE_SUCCESS_PARTIAL: Begin
+          // More data to come
+          Result := TRethinkDbCursor.Create(Self, Query, Response.Profile );
+          (Result as TRethinkDbCursor).AddResponse( Response );
+          Exit;
+        End;
+        RESPONSE_WAIT_COMPLETE: Begin
+          // Done waiting
+          Query.Destroy;
+        End;
+        RESPONSE_CLIENT_ERROR,
+        RESPONSE_COMPILE_ERROR,
+        RESPONSE_RUNTIME_ERROR: Begin
+          // Error occurred
+          Error := Response.MakeError( Query );
+          Query.Destroy;
+          Raise Error;
+        End;
       End;
-      RESPONSE_SUCCESS_SEQUENCE,
-      RESPONSE_SUCCESS_PARTIAL: Begin
-        // More data to come
-        Result := TRethinkDbCursor.Create(Self, Query, Response.Profile );
-        (Result as TRethinkDbCursor).AddResponse( Response );
-        Exit;
+    Except
+      On E: EReqlError Do Begin  
+        Raise
       End;
-      RESPONSE_WAIT_COMPLETE: Begin
-        // Done waiting
-        Query.Destroy;
-      End;
-      RESPONSE_CLIENT_ERROR,
-      RESPONSE_COMPILE_ERROR,
-      RESPONSE_RUNTIME_ERROR: Begin
-        // Error occurred
-        Error := Response.MakeError( Query );
-        Query.Destroy;
-        Raise Error;
+      On E: Exception Do Begin
+        Raise EReqlDriverError.Create(E.Message);    
       End;
     End;
   Finally
@@ -2602,7 +2693,7 @@ Begin
           Then
             Begin
               Close(False);
-              Raise ERQLDriverError.Create('Unexpected response received.');
+              Raise EReqlDriverError.Create('Unexpected response received.');
             End;
     End;
 End;
@@ -2814,7 +2905,7 @@ Function TRQLQuery.run( conn: TRethinkDbConnection; Const options: Array of Cons
 Var I : Integer; OptionsObject : TJSONObject;
 Begin
   If conn = Nil
-    Then Raise ERQLDriverError.Create('RqlQuery.run must be given a connection to run on.');
+    Then Raise EReqlDriverError.Create('RqlQuery.run must be given a connection to run on.');
   OptionsObject := TJSONObject.Create;
   I := Low(Options);
   While I <= High(Options) Do
