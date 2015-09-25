@@ -1450,6 +1450,7 @@ Type
     Function wait( Const wait_for : String = 'ready_for_writes'; Const timeout: Integer = -1 ): TRQLWait;
     Function reconfigure( Const shards: Integer; Const replicas: Integer; Const dryRun : Boolean = False ): TRQLReconfigure; Overload;
     Function reconfigure( Const shards: Integer; Const replicas: Array of Const; Const primaryReplicaTag: String; Const dryRun : Boolean = False ): TRQLReconfigure; Overload;
+    Function reconfigure( Const emergencyRepair: String; Const dryRun : Boolean = False ): TRQLReconfigure; Overload;
     Function rebalance: TRQLRebalance;
     Function sync: TRQLSync;
     Function getIntersecting( Const geometry: TRQLQuery; Const index: String ): TRQLGetIntersecting;
@@ -5362,7 +5363,7 @@ End;
 
 Function TRQLTable.reconfigure(Const shards: Integer; Const replicas: Integer; Const dryRun : Boolean = False ): TRQLReconfigure;
 Begin
-  if dryRun
+  If dryRun
     Then Result := TRQLReconfigure.Create([ Self ], ['shards', shards, 'replicas', replicas, 'dry_run', dryRun])
     Else Result := TRQLReconfigure.Create([ Self ], ['shards', shards, 'replicas', replicas])
 End;
@@ -5371,6 +5372,13 @@ Function TRQLTable.reconfigure(Const shards: Integer; Const replicas: Array of C
 Var ReplicasObject: TConstArray; I: Integer;
 Begin
   Result := TRQLReconfigure.Create([ Self ], ['shards', shards, 'replicas', ReplicasObject, 'primary_replica_tag', primaryReplicaTag, 'dry_run', dryRun]);
+End;
+
+Function TRQLTable.reconfigure( Const emergencyRepair: String; Const dryRun : Boolean = False ): TRQLReconfigure;
+Begin
+  If dryRun
+    Then Result := TRQLReconfigure.Create([ Self ], ['emergencyRepair', emergencyRepair, 'dry_run', dryRun])
+    Else Result := TRQLReconfigure.Create([ Self ], ['emergencyRepair', emergencyRepair])
 End;
 
 Function TRQLTable.wait(Const wait_for : String = 'ready_for_writes'; Const timeout: Integer = -1): TRQLWait;
