@@ -30,7 +30,8 @@ Unit RethinkDB;
 
 Interface
 
-Uses System.Generics.Collections, SysUtils, Classes, SyncObjs, IdTCPClient, IdGlobal, IdStack, IdStackConsts, DBXJson;
+Uses System.Generics.Collections, SysUtils, Classes, SyncObjs, IdTCPClient, IdGlobal, IdStack, IdStackConsts,
+{$if CompilerVersion >= 27}JSON{$else}DBXJson{$endif};
 
 Const
 
