@@ -86,6 +86,7 @@ Type
     TERMTYPE_CONTAINS = 93,
     TERMTYPE_GET_FIELD  = 31,
     TERMTYPE_KEYS = 94,
+    TERMTYPE_VALUES = 186,
     TERMTYPE_OBJECT = 143,
     TERMTYPE_HAS_FIELDS = 32,
     TERMTYPE_WITH_FIELDS = 96,
@@ -250,6 +251,7 @@ Type
   TRQLHasFields = Class;
   TRQLWithFields = Class;
   TRQLKeys = Class;
+  TRQLValues = Class;
   TRQLChanges = Class;
   TRQLPluck = Class;
   TRQLWithout = Class;
@@ -405,9 +407,10 @@ Type
     Function withFields( Const key: String ): TRQLWithFields; Overload;
     Function withFields( Const keys: Array of Const ): TRQLWithFields; Overload;
     Function keys: TRQLKeys;
-    Function changes( Const squash: Boolean; includeStates: Boolean = False ): TRQLChanges; Overload;
-    Function changes( Const squash: Double; includeStates: Boolean = False ): TRQLChanges; Overload;
-    Function changes( Const includeStates: Boolean = False ): TRQLChanges; Overload;
+    Function values: TRQLValues;
+    Function changes( Const squash: Boolean; Const includeInitial: Boolean = False; Const includeStates: Boolean = False ): TRQLChanges; Overload;
+    Function changes( Const squash: Double; Const includeInitial: Boolean = False; Const includeStates: Boolean = False ): TRQLChanges; Overload;
+    Function changes( Const includeInitial: Boolean = False; Const includeStates: Boolean = False ): TRQLChanges; Overload;
     Function pluck( Const key: String ): TRQLPluck; Overload;
     Function pluck( Const keys: Array of Const ): TRQLPluck; Overload;
     Function without( Const key: String ): TRQLWithout; Overload;
@@ -777,6 +780,11 @@ Type
   End;
 
   TRQLKeys = Class(TRQLMethodQuery)
+  Public
+    Constructor Create( Const Args: Array of Const );
+  End;
+
+  TRQLValues = Class(TRQLMethodQuery)
   Public
     Constructor Create( Const Args: Array of Const );
   End;
@@ -1534,6 +1542,8 @@ Type
   End;
 
   EReqlCompileError         = Class(EReqlError);
+  EReqlDriverCompileError   = Class(EReqlCompileError);
+  EReqlServerCompileError   = Class(EReqlCompileError);
   EReqlRuntimeError         = Class(EReqlError);
 
   EReqlQueryLogicError      = Class(EReqlRuntimeError);
@@ -1561,7 +1571,8 @@ Type
     QUERY_START = 1,
     QUERY_CONTINUE,
     QUERY_STOP,
-    QUERY_NOREPLY_WAIT
+    QUERY_NOREPLY_WAIT,
+    QUERY_SERVER_INFO
   );
 
   TRethinkDbQuery = Class(TObject)
@@ -1586,7 +1597,7 @@ Type
     RESPONSE_SUCCESS_SEQUENCE,
     RESPONSE_SUCCESS_PARTIAL,
     RESPONSE_WAIT_COMPLETE,
-    RESPONSE_SUCCESS_FEED,
+    RESPONSE_SERVER_INFO,
     RESPONSE_CLIENT_ERROR = 16,
     RESPONSE_COMPILE_ERROR,
     RESPONSE_RUNTIME_ERROR
@@ -1666,6 +1677,7 @@ Type
     Procedure reconnect( Const noreply_wait: Boolean = True );
     Procedure use( Const db_name: String );
     Function  noreply_wait: TRQLResult;
+    Function  server: TRQLResult;
 
     Property Closing: Boolean Read FClosing;
     Property Connected: Boolean Read IsOpen;
@@ -1781,7 +1793,8 @@ Type
     Class Function binary( Const data: TIdBytes ): TRQLBinary; Overload; static;
     Class Function binary( Const data : UTF8String ): TRQLBinary; Overload; static;
     Class Function binary( Const data : TRQLQuery ): TRQLBinary; Overload; static;
-    Class Function uuid: TRQLUUID; static;
+    Class Function uuid: TRQLUUID; Overload; static;
+    Class Function uuid( Const seed: String ): TRQLUUID; Overload; static;
     Class Function typeOf: TRQLTypeOf; static;
     Class Function info: TRQLInfo; static;
     Class Function range: TRQLRange; Overload; static;
@@ -2307,7 +2320,7 @@ Function TRethinkDbResponse.MakeError( Query: TRethinkDbQuery ): EReqlError;
 Begin
   Case FType Of
     RESPONSE_CLIENT_ERROR  : Result := EReqlDriverError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace);
-    RESPONSE_COMPILE_ERROR : Result := EReqlCompileError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
+    RESPONSE_COMPILE_ERROR : Result := EReqlServerCompileError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
     RESPONSE_RUNTIME_ERROR : Begin
       Case FErrorType of
         ERROR_TYPE_UNKNOWN:          Result := EReqlRuntimeError.Create( JSONToString(FData.Get(0)), Query.Term, FBacktrace );
@@ -2596,6 +2609,12 @@ Begin
   Result := RunQuery( TRethinkDbQuery.Create( QUERY_NOREPLY_WAIT, GetNewToken ),  False);
 End;
 
+Function TRethinkDbConnection.server: TRQLResult;
+Begin
+  CheckOpen;
+  Result := RunQuery( TRethinkDbQuery.Create( QUERY_SERVER_INFO, GetNewToken ),  False);
+End;
+
 Procedure TRethinkDbConnection.use( Const db_name: String );
 Begin
   FDb := db_name;
@@ -2648,6 +2667,10 @@ Begin
         End;
         RESPONSE_WAIT_COMPLETE: Begin
           // Done waiting
+          Query.Destroy;
+        End;
+        RESPONSE_SERVER_INFO: Begin
+          Result := TRQLDocument.Create( Response.Data.Get(0) );
           Query.Destroy;
         End;
         RESPONSE_CLIENT_ERROR,
@@ -3116,20 +3139,25 @@ Begin
   Result := TRQLKeys.Create( [ self ] );
 End;
 
-Function TRQLQuery.changes( Const squash: Boolean; includeStates: Boolean = False ): TRQLChanges;
+Function TRQLQuery.values: TRQLValues;
 Begin
-  Result := TRQLChanges.Create( [ self ], [ 'squash', squash, 'include_states', includeStates ] );
+  Result := TRQLValues.Create( [ self ] );
 End;
 
-Function TRQLQuery.changes( Const squash: Double; includeStates: Boolean = False ): TRQLChanges;
+Function TRQLQuery.changes( Const squash: Boolean; Const includeInitial: Boolean = False; Const includeStates: Boolean = False ): TRQLChanges;
 Begin
-  Result := TRQLChanges.Create( [ self ], [ 'squash', squash, 'include_states', includeStates ] );
+  Result := TRQLChanges.Create( [ self ], [ 'squash', squash, 'include_initial', includeInitial, 'include_states', includeStates ] );
 End;
 
-Function TRQLQuery.changes( Const includeStates: Boolean = False ): TRQLChanges;
+Function TRQLQuery.changes( Const squash: Double; Const includeInitial: Boolean = False; Const includeStates: Boolean = False ): TRQLChanges;
 Begin
-  If includeStates
-    Then Result := TRQLChanges.Create( [ self ], [ 'include_states', includeStates ] )
+  Result := TRQLChanges.Create( [ self ], [ 'squash', squash, 'include_initial', includeInitial, 'include_states', includeStates ] );
+End;
+
+Function TRQLQuery.changes( Const includeInitial: Boolean = False; Const includeStates: Boolean = False ): TRQLChanges;
+Begin
+  If includeStates or includeInitial
+    Then Result := TRQLChanges.Create( [ self ], [ 'include_initial', includeInitial, 'include_states', includeStates ] )
     Else  Result := TRQLChanges.Create( [ self ], [ ] );
 End;
 
@@ -4284,6 +4312,11 @@ End;
 Constructor TRQLKeys.Create( Const Args: Array of Const );
 Begin
   Inherited Create( TERMTYPE_KEYS, 'keys', Args );
+End;
+
+Constructor TRQLValues.Create( Const Args: Array of Const );
+Begin
+  Inherited Create( TERMTYPE_VALUES, 'values', Args );
 End;
 
 Constructor TRQLObject.Create( Const Args: Array of Const; Const OptArgs: Array of Const );
@@ -5719,6 +5752,11 @@ End;
 Class Function TRethinkDB.uuid: TRQLUUID;
 Begin
   Result := TRQLUUID.Create;
+End;
+
+Class Function TRethinkDB.uuid( Const seed: String ): TRQLUUID;
+Begin
+  Result := TRQLUUID.Create( [ seed ] );
 End;
 
 Class Function TRethinkDB.info: TRQLInfo;
