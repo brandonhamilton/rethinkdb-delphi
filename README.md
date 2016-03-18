@@ -10,7 +10,7 @@ Fully supports all operations of the [RethinkDB API](http://rethinkdb.com/api) a
     Var conn : TRethinkDbConnection; res: TRQLResult;
     Begin
       conn := r.connect( 'localhost' );
-      res := r.db('test').table_create('mytable').run( conn );
+      res := r.db('test').tableCreate('mytable').run( conn );
     End;
 
 ## Note
