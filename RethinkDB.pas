@@ -1473,7 +1473,8 @@ Type
 
     Function table( Const name: String ): TRQLTable; Overload;
     Function table( Const name: String; Const options: Array of Const ): TRQLTable; Overload;
-    Function tableCreate( Const tableName: String; Const options: Array of Const ): TRQLTableCreate;
+    Function tableCreate( Const tableName: String ): TRQLTableCreate; Overload;
+    Function tableCreate( Const tableName: String; Const options: Array of Const ): TRQLTableCreate; Overload;
     Function tableDrop( Const tableName : String ): TRQLTableDrop;
     Function tableList: TRQLTableList;
 
@@ -5148,6 +5149,11 @@ End;
 Constructor TRQLDB.Create( Const Args: Array of Const );
 Begin
   Inherited Create( TERMTYPE_DB, 'db', Args );
+End;
+
+Function TRQLDB.tableCreate( Const tableName: String ): TRQLTableCreate;
+Begin
+  Result := TRQLTableCreate.Create([ Self, tableName ], []);
 End;
 
 Function TRQLDB.tableCreate( Const tableName: String; Const options: Array of Const ): TRQLTableCreate;
